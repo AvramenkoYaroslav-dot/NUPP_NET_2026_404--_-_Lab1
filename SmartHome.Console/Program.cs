@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using System.Reflection.Emit;
 using SmartHome.Common;
 
 namespace SmartHome.ConsoleApp
@@ -79,7 +80,7 @@ namespace SmartHome.ConsoleApp
 
         private static void OnDeviceStatusChanged(string deviceName, bool isON)
         {
-            Console.WriteLine($"  [ПОДІЯ] Пристрій '{deviceName}' змінив стан на: {(isON ? "УВІМКНЕНО" : "ВИМКНЕНО")}");
+            Console.WriteLine($"  [ПОДІЯ] Пристрій '{deviceName}' змінив стан на: {(isON ? "УВІМКНЕН" : "ВИМКНЕНО")}");
         }
     }
 }

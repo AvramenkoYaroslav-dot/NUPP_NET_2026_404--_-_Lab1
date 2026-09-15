@@ -7,6 +7,17 @@
         public bool SupportsRGB { get; set; }
 
         public SmartLight() : base() { }
+        private static readonly Random _random = new Random();
+
+        public static SmartLight CreateNew()
+        {
+            return new SmartLight(
+                $"Light_{_random.Next(1000, 9999)}",
+                _random.Next(0, 101),
+                "#FFFFFF",
+                true
+            );
+        }
 
         public SmartLight(string name, int brightness, string colorHex, bool supportsRGB)
             : base(name)

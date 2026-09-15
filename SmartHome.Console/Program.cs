@@ -1,86 +1,103 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
-using System.Reflection.Emit;
+using System.Threading;
+using System.Threading.Tasks;
 using SmartHome.Common;
 
 namespace SmartHome.ConsoleApp
 {
     internal class Program
     {
-        static void Main(string[] args)
+        private static readonly object _lockObject = new object();
+        private static readonly AutoResetEvent _autoEvent = new AutoResetEvent(false);
+
+        static async Task Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.WriteLine("=================================================");
-            Console.WriteLine("   ЛАБОРАТОРНА РОБОТА №1 - СИСТЕМА SMART HOME   ");
-            Console.WriteLine("=================================================\n");
+            Console.WriteLine("=== Лабораторна робота №2: Багатопотоковість, Асинхронність, LINQ ===\n");
 
-            // 1. Статичний метод
-            Device.DisplayTotalDevices();
+            string filePath = "devices_lab2.json";
+            var service = new InMemoryCrudServiceAsync<SmartLight>(filePath);
 
-            // 2. Створення CRUD сервісу
-            ICrudService<SmartLight> lightService = new InMemoryCrudService<SmartLight>();
-
-            var light1 = new SmartLight("Люстра у вітальні", 100, "#FFFFFF", true);
-            var light2 = new SmartLight("Нічна лампа", 30, "#FF8C00", false);
-
-            // Підписка на подію (Делегат)
-            light1.StatusChanged += OnDeviceStatusChanged;
-            light2.StatusChanged += OnDeviceStatusChanged;
-
-            // 3. CREATE
-            Console.WriteLine("\n[1] Додавання об'єктів (CREATE)...");
-            lightService.Create(light1);
-            lightService.Create(light2);
-
-            // READ ALL
-            Console.WriteLine("\nСписок об'єктів у сервісі (READ ALL):");
-            foreach (var light in lightService.ReadAll())
+            // 1. Паралельне створення >1000 об'єктів з використанням Parallel.For
+            Console.WriteLine("1. Паралельне створення 1200 об'єктів SmartLight...");
+            Parallel.For(0, 1200, i =>
             {
-                Console.WriteLine(light);
+                var light = SmartLight.CreateNew();
+                service.CreateAsync(light).GetAwaiter().GetResult();
+            });
+
+            var allDevices = (await service.ReadAllAsync()).ToList();
+            Console.WriteLine($"Успішно створено пристроїв: {allDevices.Count}");
+
+            // 2. Використання LINQ для пошуку Min, Max, Average
+            Console.WriteLine("\n2. Статистичний аналіз цифрових значень (LINQ):");
+            int minBrightness = allDevices.Min(d => d.Brightness);
+            int maxBrightness = allDevices.Max(d => d.Brightness);
+            double avgBrightness = allDevices.Average(d => d.Brightness);
+
+            Console.WriteLine($" - Мінімальна яскравість: {minBrightness}%");
+            Console.WriteLine($" - Максимальна яскравість: {maxBrightness}%");
+            Console.WriteLine($" - Середня яскравість:   {avgBrightness:F2}%");
+
+            // 3. Пагінація
+            Console.WriteLine("\n3. Перевірка пагінації (Сторінка 1, 5 елементів):");
+            var paged = await service.ReadAllAsync(page: 1, amount: 5);
+            foreach (var dev in paged)
+            {
+                Console.WriteLine($"   {dev}");
             }
 
-            // 4. Демонстрація методів розширення та подій
-            Console.WriteLine("\n[2] Події та метод розширення...");
-            light1.TurnOn(); // Викликає подію
-            Console.WriteLine(light1.GetStatusReport()); // Метод розширення
+            // 4. Демонстрація примітивів синхронізації
+            Console.WriteLine("\n4. Демонстрація примітивів синхронізації:");
+            DemonstrateSyncPrimitives();
 
-            // 5. UPDATE
-            Console.WriteLine("\n[3] Оновлення об'єкта (UPDATE)...");
-            light1.Brightness = 50;
-            light1.ColorHex = "#00FF00";
-            lightService.Update(light1);
-            Console.WriteLine($"Оновлений об'єкт з базі: {lightService.Read(light1.Id)}");
+            // 5. Асинхронне збереження у файл
+            Console.WriteLine("\n5. Збереження колекції у файл...");
+            bool saved = await service.SaveAsync();
+            Console.WriteLine(saved ? $"Файл успішно збережено за шляхом: {Path.GetFullPath(filePath)}" : "Помилка збереження.");
 
-            // 6. ДОДАТКОВЕ ЗАВДАННЯ (Save & Load)
-            string filePath = "smart_lights.json";
-            Console.WriteLine($"\n[4] Збереження у JSON файл ({filePath})...");
-            lightService.Save(filePath);
-            Console.WriteLine("Успішно збережено!");
-
-            Console.WriteLine("\nЗавантаження у новий екземпляр сервісу з файлу...");
-            ICrudService<SmartLight> newLightService = new InMemoryCrudService<SmartLight>();
-            newLightService.Load(filePath);
-
-            foreach (var light in newLightService.ReadAll())
-            {
-                Console.WriteLine($"[З файлу] {light}");
-            }
-
-            // 7. REMOVE
-            Console.WriteLine("\n[5] Видалення об'єкта (REMOVE)...");
-            newLightService.Remove(light2);
-            Console.WriteLine($"Кількість елементів після видалення: {newLightService.ReadAll().Count()}");
-
-            Console.WriteLine("\n=================================================");
-            Device.DisplayTotalDevices();
-
-            Console.WriteLine("\nНатисніть будь-яку клавішу для завершення...");
-            Console.ReadKey();
+            Console.WriteLine("\nРоботу програми завершено успішно.");
         }
 
-        private static void OnDeviceStatusChanged(string deviceName, bool isON)
+        private static void DemonstrateSyncPrimitives()
         {
-            Console.WriteLine($"  [ПОДІЯ] Пристрій '{deviceName}' змінив стан на: {(isON ? "УВІМКНЕН" : "ВИМКНЕНО")}");
+            // Lock
+            int counter = 0;
+            Parallel.For(0, 100, i =>
+            {
+                lock (_lockObject)
+                {
+                    counter++;
+                }
+            });
+            Console.WriteLine($" - [Lock] Лічильник після 100 паралельних інкрементів: {counter}");
+
+            // SemaphoreSlim
+            using (var semaphore = new SemaphoreSlim(2, 2))
+            {
+                int activeAccess = 0;
+                Parallel.For(0, 5, i =>
+                {
+                    semaphore.Wait();
+                    Interlocked.Increment(ref activeAccess);
+                    Thread.Sleep(20);
+                    Interlocked.Decrement(ref activeAccess);
+                    semaphore.Release();
+                });
+                Console.WriteLine(" - [SemaphoreSlim] Демонстрація обмеження одночасного доступу виконана.");
+            }
+
+            // AutoResetEvent
+            Task.Run(() =>
+            {
+                Thread.Sleep(50);
+                _autoEvent.Set();
+            });
+            _autoEvent.WaitOne();
+            Console.WriteLine(" - [AutoResetEvent] Сигнал отримано від фонового потоку.");
         }
     }
 }

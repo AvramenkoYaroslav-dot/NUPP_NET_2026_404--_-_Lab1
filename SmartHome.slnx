@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="SmartHome.Common/SmartHome.Common.csproj" />
   <Project Path="SmartHome.Console/SmartHome.Console.csproj" />
+  <Project Path="SmartHome.Infrastructure/SmartHome.Infrastructure.csproj" Id="5980824b-b1e8-4f6d-9d9a-6d00a01ed831" />
 </Solution>

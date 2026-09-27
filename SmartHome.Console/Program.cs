@@ -1,103 +1,66 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Microsoft.EntityFrameworkCore;
 using SmartHome.Common;
+using SmartHome.Infrastructure;
+using SmartHome.Infrastructure.Models;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace SmartHome.ConsoleApp
 {
     internal class Program
     {
-        private static readonly object _lockObject = new object();
-        private static readonly AutoResetEvent _autoEvent = new AutoResetEvent(false);
-
         static async Task Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.WriteLine("=== Лабораторна робота №2: Багатопотоковість, Асинхронність, LINQ ===\n");
+            Console.WriteLine("=== Лабораторна робота №3: Entity Framework Core & SQLite ===\n");
 
-            string filePath = "devices_lab2.json";
-            var service = new InMemoryCrudServiceAsync<SmartLight>(filePath);
-
-            // 1. Паралельне створення >1000 об'єктів з використанням Parallel.For
-            Console.WriteLine("1. Паралельне створення 1200 об'єктів SmartLight...");
-            Parallel.For(0, 1200, i =>
+            using (var context = new SmartHomeContext())
             {
-                var light = SmartLight.CreateNew();
-                service.CreateAsync(light).GetAwaiter().GetResult();
-            });
+                // Автоматичне застосування міграцій та створення БД
+                await context.Database.MigrateAsync();
 
-            var allDevices = (await service.ReadAllAsync()).ToList();
-            Console.WriteLine($"Успішно створено пристроїв: {allDevices.Count}");
+                var repository = new Repository<DeviceModel>(context);
+                var service = new DbCrudServiceAsync(repository);
 
-            // 2. Використання LINQ для пошуку Min, Max, Average
-            Console.WriteLine("\n2. Статистичний аналіз цифрових значень (LINQ):");
-            int minBrightness = allDevices.Min(d => d.Brightness);
-            int maxBrightness = allDevices.Max(d => d.Brightness);
-            double avgBrightness = allDevices.Average(d => d.Brightness);
+                // 1. Створення кімнати та 1-до-1 датчика
+                Console.WriteLine("1. Створення Кімнати та Датчика Клімату (1-до-1)...");
+                var room = new RoomModel { Name = "Вітальня" };
+                var sensor = new ClimateSensorModel { SerialNumber = "SENS-101", Humidity = 45.5, Room = room };
+                context.Rooms.Add(room);
+                context.ClimateSensors.Add(sensor);
+                await context.SaveChangesAsync();
 
-            Console.WriteLine($" - Мінімальна яскравість: {minBrightness}%");
-            Console.WriteLine($" - Максимальна яскравість: {maxBrightness}%");
-            Console.WriteLine($" - Середня яскравість:   {avgBrightness:F2}%");
+                // 2. Створення пристроїв TPT (1-до-багатьох з Кімнатою)
+                Console.WriteLine("\n2. Додавання пристроїв (TPT Таблиця-на-тип) до БД...");
+                var light = new SmartLightModel { Name = "Люстра", Brightness = 85, Color = "#FFFFFF", RoomId = room.Id };
+                var thermo = new ThermostatModel { Name = "Термостат", TargetTemperature = 22.5, CurrentTemperature = 21.0, Mode = "Auto", RoomId = room.Id };
 
-            // 3. Пагінація
-            Console.WriteLine("\n3. Перевірка пагінації (Сторінка 1, 5 елементів):");
-            var paged = await service.ReadAllAsync(page: 1, amount: 5);
-            foreach (var dev in paged)
-            {
-                Console.WriteLine($"   {dev}");
-            }
+                await service.CreateAsync(light);
+                await service.CreateAsync(thermo);
 
-            // 4. Демонстрація примітивів синхронізації
-            Console.WriteLine("\n4. Демонстрація примітивів синхронізації:");
-            DemonstrateSyncPrimitives();
-
-            // 5. Асинхронне збереження у файл
-            Console.WriteLine("\n5. Збереження колекції у файл...");
-            bool saved = await service.SaveAsync();
-            Console.WriteLine(saved ? $"Файл успішно збережено за шляхом: {Path.GetFullPath(filePath)}" : "Помилка збереження.");
-
-            Console.WriteLine("\nРоботу програми завершено успішно.");
-        }
-
-        private static void DemonstrateSyncPrimitives()
-        {
-            // Lock
-            int counter = 0;
-            Parallel.For(0, 100, i =>
-            {
-                lock (_lockObject)
+                // 3. Зчитування з бази даних через сервіс
+                Console.WriteLine("\n3. Читання пристроїв із SQLite БД через Репозиторій:");
+                var devices = await service.ReadAllAsync();
+                foreach (var d in devices)
                 {
-                    counter++;
+                    Console.WriteLine($" - [ID: {d.Id}] Name: {d.Name}, RoomId: {d.RoomId}");
                 }
-            });
-            Console.WriteLine($" - [Lock] Лічильник після 100 паралельних інкрементів: {counter}");
 
-            // SemaphoreSlim
-            using (var semaphore = new SemaphoreSlim(2, 2))
-            {
-                int activeAccess = 0;
-                Parallel.For(0, 5, i =>
-                {
-                    semaphore.Wait();
-                    Interlocked.Increment(ref activeAccess);
-                    Thread.Sleep(20);
-                    Interlocked.Decrement(ref activeAccess);
-                    semaphore.Release();
-                });
-                Console.WriteLine(" - [SemaphoreSlim] Демонстрація обмеження одночасного доступу виконана.");
+                // 4. Демонстрація Багато-до-багатьох (Scenario & Devices)
+                Console.WriteLine("\n4. Створення Сценарію та додавання пристроїв (Багато-до-багатьох)...");
+                var scenario = new ScenarioModel { Title = "Вечірній режим" };
+                context.Scenarios.Add(scenario);
+                await context.SaveChangesAsync();
+
+                context.ScenarioDevices.Add(new ScenarioDeviceModel { ScenarioId = scenario.Id, DeviceId = light.Id });
+                context.ScenarioDevices.Add(new ScenarioDeviceModel { ScenarioId = scenario.Id, DeviceId = thermo.Id });
+                await context.SaveChangesAsync();
+
+                Console.WriteLine($"Сценарій '{scenario.Title}' успішно зв'язано з {context.ScenarioDevices.Count()} пристроями.");
             }
 
-            // AutoResetEvent
-            Task.Run(() =>
-            {
-                Thread.Sleep(50);
-                _autoEvent.Set();
-            });
-            _autoEvent.WaitOne();
-            Console.WriteLine(" - [AutoResetEvent] Сигнал отримано від фонового потоку.");
+            Console.WriteLine("\nЛабораторну роботу №3 успішно виконано.");
         }
     }
 }

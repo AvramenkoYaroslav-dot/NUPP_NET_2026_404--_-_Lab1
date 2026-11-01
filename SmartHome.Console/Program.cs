@@ -1,85 +1,66 @@
-﻿using System;
-using System.Linq;
+﻿using Microsoft.EntityFrameworkCore;
 using SmartHome.Common;
+using SmartHome.Infrastructure;
+using SmartHome.Infrastructure.Models;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace SmartHome.ConsoleApp
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.WriteLine("=================================================");
-            Console.WriteLine("   ЛАБОРАТОРНА РОБОТА №1 - СИСТЕМА SMART HOME   ");
-            Console.WriteLine("=================================================\n");
+            Console.WriteLine("=== Лабораторна робота №3: Entity Framework Core & SQLite ===\n");
 
-            // 1. Статичний метод
-            Device.DisplayTotalDevices();
-
-            // 2. Створення CRUD сервісу
-            ICrudService<SmartLight> lightService = new InMemoryCrudService<SmartLight>();
-
-            var light1 = new SmartLight("Люстра у вітальні", 100, "#FFFFFF", true);
-            var light2 = new SmartLight("Нічна лампа", 30, "#FF8C00", false);
-
-            // Підписка на подію (Делегат)
-            light1.StatusChanged += OnDeviceStatusChanged;
-            light2.StatusChanged += OnDeviceStatusChanged;
-
-            // 3. CREATE
-            Console.WriteLine("\n[1] Додавання об'єктів (CREATE)...");
-            lightService.Create(light1);
-            lightService.Create(light2);
-
-            // READ ALL
-            Console.WriteLine("\nСписок об'єктів у сервісі (READ ALL):");
-            foreach (var light in lightService.ReadAll())
+            using (var context = new SmartHomeContext())
             {
-                Console.WriteLine(light);
+                // Автоматичне застосування міграцій та створення БД
+                await context.Database.MigrateAsync();
+
+                var repository = new Repository<DeviceModel>(context);
+                var service = new DbCrudServiceAsync(repository);
+
+                // 1. Створення кімнати та 1-до-1 датчика
+                Console.WriteLine("1. Створення Кімнати та Датчика Клімату (1-до-1)...");
+                var room = new RoomModel { Name = "Вітальня" };
+                var sensor = new ClimateSensorModel { SerialNumber = "SENS-101", Humidity = 45.5, Room = room };
+                context.Rooms.Add(room);
+                context.ClimateSensors.Add(sensor);
+                await context.SaveChangesAsync();
+
+                // 2. Створення пристроїв TPT (1-до-багатьох з Кімнатою)
+                Console.WriteLine("\n2. Додавання пристроїв (TPT Таблиця-на-тип) до БД...");
+                var light = new SmartLightModel { Name = "Люстра", Brightness = 85, Color = "#FFFFFF", RoomId = room.Id };
+                var thermo = new ThermostatModel { Name = "Термостат", TargetTemperature = 22.5, CurrentTemperature = 21.0, Mode = "Auto", RoomId = room.Id };
+
+                await service.CreateAsync(light);
+                await service.CreateAsync(thermo);
+
+                // 3. Зчитування з бази даних через сервіс
+                Console.WriteLine("\n3. Читання пристроїв із SQLite БД через Репозиторій:");
+                var devices = await service.ReadAllAsync();
+                foreach (var d in devices)
+                {
+                    Console.WriteLine($" - [ID: {d.Id}] Name: {d.Name}, RoomId: {d.RoomId}");
+                }
+
+                // 4. Демонстрація Багато-до-багатьох (Scenario & Devices)
+                Console.WriteLine("\n4. Створення Сценарію та додавання пристроїв (Багато-до-багатьох)...");
+                var scenario = new ScenarioModel { Title = "Вечірній режим" };
+                context.Scenarios.Add(scenario);
+                await context.SaveChangesAsync();
+
+                context.ScenarioDevices.Add(new ScenarioDeviceModel { ScenarioId = scenario.Id, DeviceId = light.Id });
+                context.ScenarioDevices.Add(new ScenarioDeviceModel { ScenarioId = scenario.Id, DeviceId = thermo.Id });
+                await context.SaveChangesAsync();
+
+                Console.WriteLine($"Сценарій '{scenario.Title}' успішно зв'язано з {context.ScenarioDevices.Count()} пристроями.");
             }
 
-            // 4. Демонстрація методів розширення та подій
-            Console.WriteLine("\n[2] Події та метод розширення...");
-            light1.TurnOn(); // Викликає подію
-            Console.WriteLine(light1.GetStatusReport()); // Метод розширення
-
-            // 5. UPDATE
-            Console.WriteLine("\n[3] Оновлення об'єкта (UPDATE)...");
-            light1.Brightness = 50;
-            light1.ColorHex = "#00FF00";
-            lightService.Update(light1);
-            Console.WriteLine($"Оновлений об'єкт з базі: {lightService.Read(light1.Id)}");
-
-            // 6. ДОДАТКОВЕ ЗАВДАННЯ (Save & Load)
-            string filePath = "smart_lights.json";
-            Console.WriteLine($"\n[4] Збереження у JSON файл ({filePath})...");
-            lightService.Save(filePath);
-            Console.WriteLine("Успішно збережено!");
-
-            Console.WriteLine("\nЗавантаження у новий екземпляр сервісу з файлу...");
-            ICrudService<SmartLight> newLightService = new InMemoryCrudService<SmartLight>();
-            newLightService.Load(filePath);
-
-            foreach (var light in newLightService.ReadAll())
-            {
-                Console.WriteLine($"[З файлу] {light}");
-            }
-
-            // 7. REMOVE
-            Console.WriteLine("\n[5] Видалення об'єкта (REMOVE)...");
-            newLightService.Remove(light2);
-            Console.WriteLine($"Кількість елементів після видалення: {newLightService.ReadAll().Count()}");
-
-            Console.WriteLine("\n=================================================");
-            Device.DisplayTotalDevices();
-
-            Console.WriteLine("\nНатисніть будь-яку клавішу для завершення...");
-            Console.ReadKey();
-        }
-
-        private static void OnDeviceStatusChanged(string deviceName, bool isON)
-        {
-            Console.WriteLine($"  [ПОДІЯ] Пристрій '{deviceName}' змінив стан на: {(isON ? "УВІМКНЕНО" : "ВИМКНЕНО")}");
+            Console.WriteLine("\nЛабораторну роботу №3 успішно виконано.");
         }
     }
 }

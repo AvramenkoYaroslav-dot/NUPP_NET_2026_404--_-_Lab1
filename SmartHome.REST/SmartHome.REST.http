@@ -1,0 +1,6 @@
+@SmartHome.REST_HostAddress = http://localhost:5137
+
+GET {{SmartHome.REST_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
